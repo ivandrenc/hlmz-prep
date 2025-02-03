@@ -1,12 +1,12 @@
-example_id,true_sentence,false_sentence
-0,Macron is the president of France.,Macron is the president of Germany.
-1,The Earth is round.,The Earth is flat.
-2,Boiling degree of water in Celsius is 100.,Boiling degree of water in Celsius is 50.
-3,The sun rises in the east.,The sun rises in the west.
-4,Grass is green.,Grass is purple.
-5,The Eiffel Tower is made of iron.,The Eiffel Tower is made of wood.
-6,The number of colours in a rainbow is 7.,The number of colours in a rainbow is 5.
-7,The coldest desert is Antarctica.,The coldest desert is Sahara.
-8,The largest planet in our solar system is Jupiter.,The largest planet in our solar system is Saturn.
-9,The tallest mountain is Mount Everest.,The tallest mountain is Mount Wycheproof
-10,Dogs are animals.,Dogs are plants.
+example_id ,true_sentence                                      ,false_sentence                                    ,token_probability_true_sentence ,token_probability_false_sentence
+         0 ,Macron is the president of France.                 ,Macron is the president of Germany.               ,             43.375617265701294 ,              49.307820200920105
+         1 ,The Earth is round.                                ,The Earth is flat.                                ,             56.092268228530884 ,              47.02325165271759
+         2 ,Boiling degree of water in Celsius is 100.         ,Boiling degree of water in Celsius is 50.         ,             53.94192934036255  ,              54.90919351577759
+         3 ,The sun rises in the east.                         ,The sun rises in the west.                        ,             63.81391882896423  ,              60.85328459739685
+         4 ,Grass is green.                                    ,Grass is purple.                                  ,             53.97002696990967  ,              51.018548011779785
+         5 ,The Eiffel Tower is made of iron.                  ,The Eiffel Tower is made of wood.                 ,             46.949535608291626 ,              65.64052104949951
+         6 ,The number of colours in a rainbow is 7.           ,The number of colours in a rainbow is 5.          ,             42.55295991897583  ,              44.562092423439026
+         7 ,The coldest desert is Antarctica.                  ,The coldest desert is Sahara.                     ,             48.375123739242554 ,              39.369237422943115
+         8 ,The largest planet in our solar system is Jupiter. ,The largest planet in our solar system is Saturn. ,             45.56575417518616  ,              41.548165678977966
+         9 ,The tallest mountain is Mount Everest.             ,The tallest mountain is Mount Wycheproof          ,             13.462594151496887 ,              25.07469356060028
+        10 ,Dogs are animals.                                  ,Dogs are plants.                                  ,             65.19891619682312  ,              60.59727072715759
