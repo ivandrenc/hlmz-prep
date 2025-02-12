@@ -1,12 +1,12 @@
-example_id ,true_sentence                                      ,false_sentence                                    ,token_probability_true_sentence ,token_probability_false_sentence
-         0 ,Macron is the president of France.                 ,Macron is the president of Germany.               ,          81.22127652168274     ,              37.07254230976105
-         1 ,The Earth is round.                                ,The Earth is flat.                                ,          61.77597641944885     ,              32.893359661102295
-         2 ,Boiling degree of water in Celsius is 100.         ,Boiling degree of water in Celsius is 50.         ,          27.434682846069336    ,              15.784618258476257
-         3 ,The sun rises in the east.                         ,The sun rises in the west.                        ,          88.54288458824158     ,              91.57499074935913
-         4 ,Grass is green.                                    ,Grass is purple.                                  ,           0.017398467753082514 ,              38.88258635997772
-         5 ,The Eiffel Tower is made of iron.                  ,The Eiffel Tower is made of wood.                 ,          43.768998980522156    ,              67.78380274772644
-         6 ,The number of colours in a rainbow is 7.           ,The number of colours in a rainbow is 5.          ,          26.320239901542664    ,              27.767857909202576
-         7 ,The coldest desert is Antarctica.                  ,The coldest desert is Sahara.                     ,          18.012313544750214    ,              25.802138447761536
-         8 ,The largest planet in our solar system is Jupiter. ,The largest planet in our solar system is Saturn. ,          11.204607039690018    ,               4.279420152306557
-         9 ,The tallest mountain is Mount Everest.             ,The tallest mountain is Mount Wycheproof          ,           9.985721111297607    ,              88.24475407600403
-        10 ,Dogs are animals.                                  ,Dogs are plants.                                  ,          40.03909528255463     ,              42.22880005836487
+example_id,true_sentence,false_sentence,token_probability_true_sentence,token_probability_false_sentence
+0,Macron is the president of France.,Macron is the president of Germany.,24.12109375,37.3046875
+1,The Earth is round.,The Earth is flat.,62.109375,33.0078125
+2,Boiling degree of water in Celsius is 100.,Boiling degree of water in Celsius is 50.,26.3671875,15.33203125
+3,The sun rises in the east.,The sun rises in the west.,89.0625,91.796875
+4,Grass is green.,Grass is purple.,0.016880035400390625,39.0625
+5,The Eiffel Tower is made of iron.,The Eiffel Tower is made of wood.,43.75,67.1875
+6,The number of colours in a rainbow is 7.,The number of colours in a rainbow is 5.,26.3671875,27.734375
+7,The coldest desert is Antarctica.,The coldest desert is Sahara.,18.06640625,25.1953125
+8,The largest planet in our solar system is Jupiter.,The largest planet in our solar system is Saturn.,11.328125,4.345703125
+9,The tallest mountain is Mount Everest.,The tallest mountain is Mount Wycheproof,9.66796875,87.890625
+10,Dogs are animals.,Dogs are plants.,39.0625,41.796875
