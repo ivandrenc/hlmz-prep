@@ -13,7 +13,6 @@ import gc
 import json
 from collections import defaultdict
 from operator import itemgetter
-import ast
 
 # Global settings
 torch.set_grad_enabled(False)  # to disable gradients -> faster computiations
@@ -61,6 +60,8 @@ def load_dataset(path_to_csv: str):
     # Create a new column "token_probability" for saving up the probabilites of the studied token for all prompts. Initially, 0.
     dataset["token_probability_true_sentence"] = 0
     dataset["token_probability_false_sentence"] = 0
+    dataset["token_probability_true_sentence_switched"] = 0
+    dataset["token_probability_false_sentence_switched"] = 0
 
 
 def print_colored_separator(
@@ -75,7 +76,6 @@ def print_colored_separator(
 def feed_forward(
     true_sentence: str,
     false_sentence: str,
-    prompt_repetitions: int = 1,
     prints_enabled: bool = False,
 ):
     print_colored_separator(prints_enabled)
@@ -299,8 +299,8 @@ def display_attention_visualizations(
 def save_plot_results(save_path: str):
     # Load the DataFrame (assuming df is already loaded)
     # Convert JSON strings to dictionaries
-    dataset["true_probs"] = dataset["token_probability_true_sentence"].apply(json.loads)
-    dataset["false_probs"] = dataset["token_probability_false_sentence"].apply(json.loads)
+    dataset["true_probs"] = dataset["result_true_token"].apply(json.loads)
+    dataset["false_probs"] = dataset["result_false_token"].apply(json.loads)
 
     # Convert probabilities to DataFrame
     true_df = pd.DataFrame(dataset["true_probs"].to_list())
@@ -314,14 +314,14 @@ def save_plot_results(save_path: str):
     long_df = pd.concat([true_df, false_df])
 
     # Convert to long format for seaborn
-    long_df = long_df.melt(id_vars=["Type"], var_name="L_H_Key", value_name="Probability")
+    long_df = long_df.melt(
+        id_vars=["Type"], var_name="L_H_Key", value_name="Probability"
+    )
 
     # Plot using seaborn
     plt.figure(figsize=(12, 6))
     ax = sns.barplot(data=long_df, x="L_H_Key", y="Probability", hue="Type")
     ax.get_figure().savefig(f"{save_path}-results-plot.png", dpi=300)
-
-
 
 
 def get_average_across_heads(head_set, top_k_heads: int):
@@ -372,12 +372,12 @@ def delete_model():
         torch.mps.empty_cache()  # Clear MPS GPU memory
 
 
-def calculate_induction_scores(true_sentence: str, false_sentence: str):
+def calculate_induction_scores(first_sentence: str, second_sentence: str):
     models_output, token_sequence, token_number_sentence = feed_forward(
-        true_sentence=true_sentence, false_sentence=false_sentence
+        true_sentence=first_sentence, false_sentence=second_sentence
     )
     if token_sequence is None:
-        # true_sentence and false_sentence have different number of tokens after tokenizing them.
+        # first_sentence and second_sentence have different number of tokens after tokenizing them.
         return pd.Series([pd.NA, pd.NA])
     induction_mask = create_attention_mask(
         token_sequence=token_sequence, token_number_sentence=token_number_sentence
@@ -403,22 +403,23 @@ def calculate_induction_scores(true_sentence: str, false_sentence: str):
 def attention_probs_for_heads(row, top_heads):
     probs_true = json.loads(row["token_probability_true_sentence"])
     probs_false = json.loads(row["token_probability_false_sentence"])
+    probs_true_second = json.loads(row["token_probability_true_sentence_switched"])
+    probs_false_second = json.loads(row["token_probability_false_sentence_switched"])
+
     data_true = {}
     data_false = {}
     for key, _ in top_heads.items():
-        data_true[key] = probs_true[key]
-        data_false[key] = probs_false[key]
+        data_true[key] = (probs_true[key] + probs_true_second[key]) / 2
+        data_false[key] = (probs_false[key] + probs_false_second[key]) / 2
     return pd.Series([json.dumps(data_true), json.dumps(data_false)])
 
 
-def run_experiment(
-    dataset_csv_file_path: str, llm_models: list, prompt_repetitions: int = 1
-):
-    for mod in llm_models:
+def run_experiment(dataset_csv_file_path: str, llm_models: list):
+    for model in llm_models:
         print(
             f"Using device: {torch.device('mps') if torch.backends.mps.is_available() else 'cpu'}"
         )
-        initialize_model(model_name=mod, tokenizer_name=mod)
+        initialize_model(model_name=model, tokenizer_name=model)
         load_dataset(path_to_csv=dataset_csv_file_path)
 
         global dataset
@@ -430,15 +431,38 @@ def run_experiment(
             ]
         ] = dataset.apply(
             lambda row: calculate_induction_scores(
-                true_sentence=row["true_sentence"], false_sentence=row["false_sentence"]
+                first_sentence=row["true_sentence"],
+                second_sentence=row["false_sentence"],
             ),
             axis=1,
         )
 
+        print("Done calculating induction scores for first variant batch.")
+
+        # Calculate probabilities now for the switched variant. First false sentence and then true sentence
+        dataset[
+            [
+                "induction_scores_switched",
+                "token_probability_true_sentence_switched",
+                "token_probability_false_sentence_switched",
+            ]
+        ] = dataset.apply(
+            lambda row: calculate_induction_scores(
+                first_sentence=row["false_sentence"],
+                second_sentence=row["true_sentence"],
+            ),
+            axis=1,
+        )
+
+        print("Done calculating induction scores for second variant batch.")
+
         # Identify rows that will be dropped
         rows_to_drop = dataset[
             dataset[
-                ["token_probability_true_sentence", "token_probability_false_sentence"]
+                [
+                    "token_probability_true_sentence",
+                    "token_probability_false_sentence",
+                ]
             ]
             .isna()
             .any(axis=1)
@@ -457,15 +481,25 @@ def run_experiment(
 
         head_set = dataset["induction_scores"]
         top_heads = average_induction_scores(head_set=head_set, slice_top_k_heads=5)
-        print(f"The top heads with the avg induction score are: {top_heads}\n")
+        print(
+            f"The top heads with the avg induction score for the first variant are: {top_heads}\n"
+        )
 
-        dataset[
-            ["token_probability_true_sentence", "token_probability_false_sentence"]
-        ] = dataset.apply(lambda row: attention_probs_for_heads(row, top_heads), axis=1)
+        head_set = dataset["induction_scores_switched"]
+        top_heads = average_induction_scores(head_set=head_set, slice_top_k_heads=5)
+        print(
+            f"The top heads with the avg induction score for the second variant are: {top_heads}\n"
+        )
+
+        dataset[["result_true_token", "result_false_token"]] = dataset.apply(
+            lambda row: attention_probs_for_heads(row, top_heads), axis=1
+        )
+
+        print("Done calculating the results. Saving results...")
 
         # Create CSV result files saved in folders respective to the used LLM.
         model_image_path = save_result_csv(
-            model_name=mod, dataset_csv_file_path=dataset_csv_file_path
+            model_name=model, dataset_csv_file_path=dataset_csv_file_path
         )
 
         # Plot the results
@@ -479,7 +513,7 @@ def main():
     # ### Experiment Start
     print("Your current working directory:", os.getcwd())
     run_experiment(
-        dataset_csv_file_path=CSV_PATH_DATASET, llm_models=models, prompt_repetitions=1
+        dataset_csv_file_path=CSV_PATH_DATASET, llm_models=models
     )
 
 
