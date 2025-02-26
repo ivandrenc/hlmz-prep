@@ -297,41 +297,31 @@ def display_attention_visualizations(
 
 
 def save_plot_results(save_path: str):
-    # All rows have the same heads, extract the keys
-    heads = (
-        dataset["token_probability_true_sentence"]
-        .apply(json.loads)
-        .apply(lambda d: set(d.keys()))
-    )
+    # Load the DataFrame (assuming df is already loaded)
+    # Convert JSON strings to dictionaries
+    dataset["true_probs"] = dataset["token_probability_true_sentence"].apply(json.loads)
+    dataset["false_probs"] = dataset["token_probability_false_sentence"].apply(json.loads)
 
-    data = []
-    for _, row in dataset.iterrows():
-        for head in heads:
-            data.append(
-                {
-                    "Head": head,
-                    "Probability": json.loads(row["token_probability_true_sentence"])[
-                        head
-                    ],
-                    "Type": "True",
-                }
-            )
-            data.append(
-                {
-                    "Head": head,
-                    "Probability": json.loads(row["token_probability_false_sentence"])[
-                        head
-                    ],
-                    "Type": "False",
-                }
-            )
+    # Convert probabilities to DataFrame
+    true_df = pd.DataFrame(dataset["true_probs"].to_list())
+    false_df = pd.DataFrame(dataset["false_probs"].to_list())
 
-    plot_df = pd.DataFrame(data=data)
-    # Ensure "Type" column is formatted correctly to avoid duplicate legend entries
-    plot_df["Type"] = plot_df["Type"].astype(str).str.strip()
-    plt.figure(figsize=(12, 10))
-    ax = sns.barplot(data=plot_df, x="Head", y="Probability", hue="Type")
+    # Add labels for True and False sentences
+    true_df["Type"] = "True Sentence"
+    false_df["Type"] = "False Sentence"
+
+    # Concatenate both DataFrames
+    long_df = pd.concat([true_df, false_df])
+
+    # Convert to long format for seaborn
+    long_df = long_df.melt(id_vars=["Type"], var_name="L_H_Key", value_name="Probability")
+
+    # Plot using seaborn
+    plt.figure(figsize=(12, 6))
+    ax = sns.barplot(data=long_df, x="L_H_Key", y="Probability", hue="Type")
     ax.get_figure().savefig(f"{save_path}-results-plot.png", dpi=300)
+
+
 
 
 def get_average_across_heads(head_set, top_k_heads: int):
@@ -410,6 +400,17 @@ def calculate_induction_scores(true_sentence: str, false_sentence: str):
     )
 
 
+def attention_probs_for_heads(row, top_heads):
+    probs_true = json.loads(row["token_probability_true_sentence"])
+    probs_false = json.loads(row["token_probability_false_sentence"])
+    data_true = {}
+    data_false = {}
+    for key, _ in top_heads.items():
+        data_true[key] = probs_true[key]
+        data_false[key] = probs_false[key]
+    return pd.Series([json.dumps(data_true), json.dumps(data_false)])
+
+
 def run_experiment(
     dataset_csv_file_path: str, llm_models: list, prompt_repetitions: int = 1
 ):
@@ -456,6 +457,11 @@ def run_experiment(
 
         head_set = dataset["induction_scores"]
         top_heads = average_induction_scores(head_set=head_set, slice_top_k_heads=5)
+        print(f"The top heads with the avg induction score are: {top_heads}\n")
+
+        dataset[
+            ["token_probability_true_sentence", "token_probability_false_sentence"]
+        ] = dataset.apply(lambda row: attention_probs_for_heads(row, top_heads), axis=1)
 
         # Create CSV result files saved in folders respective to the used LLM.
         model_image_path = save_result_csv(
@@ -463,7 +469,7 @@ def run_experiment(
         )
 
         # Plot the results
-        # save_plot_results(save_path=model_image_path)
+        save_plot_results(save_path=model_image_path)
 
         # Delete the model loaded in memory
         delete_model()
