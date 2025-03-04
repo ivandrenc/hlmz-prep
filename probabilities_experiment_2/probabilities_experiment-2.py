@@ -32,6 +32,13 @@ CSV_PATH_DATASET = "dataset/examples.csv"
 
 models = [META_LLAMA_3_2_3B]
 
+# Experiment description: We run the model with the examples in no order and with the order switched, find the top 5
+# induction heads by looking into the induction scores of both ran examples, average the scores across examples and
+# select the top 5. Then with the identified heads we get the attention probabilities of the true, false token from every example
+# and we average them as well. Then we can plot these results for the top 5 heads as a barplot to see which heads are more
+# biased to output false information or correct information. Then we also compute the probabilities of the next token prediction
+# by looking into the logits, for the correct token, false token, and the top probable to predict token. We then plot these results as well.
+
 
 def initialize_model(model_name: str, tokenizer_name: str = None):
     if not tokenizer_name:
