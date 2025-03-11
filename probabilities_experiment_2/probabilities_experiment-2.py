@@ -27,10 +27,10 @@ tokenizer = None
 META_LLAMA_3_2_3B = "meta-llama/Llama-3.2-3B"
 GOOGLE_GEMMA_2_2B = "google/gemma-2-2b"
 dataset = {}
-CSV_PATH_DATASET = "dataset/examples.csv"
+CSV_PATH_DATASET = "../dataset/examples.csv"
 
 
-models = [META_LLAMA_3_2_3B]
+models = [GOOGLE_GEMMA_2_2B]
 
 # Experiment description: We run the model with the examples in no order and with the order switched, find the top 5
 # induction heads by looking into the induction scores of both ran examples, average the scores across examples and
@@ -44,8 +44,8 @@ def initialize_model(model_name: str, tokenizer_name: str = None):
     if not tokenizer_name:
         tokenizer_name = model_name
     # Initialize model and tokenizer
-    global model
-    model = AutoModelForCausalLM.from_pretrained(
+    global mod
+    mod = AutoModelForCausalLM.from_pretrained(
         model_name, device_map="auto", torch_dtype=torch.bfloat16
     )
     if not tokenizer_name:
@@ -108,9 +108,9 @@ def feed_forward(
     tokens = token_sequence["input_ids"][0]
 
     # Feed forward to the model
-    global model
-    out = model(
-        tokens.unsqueeze(0).to(model.device), return_dict=True, output_attentions=True
+    global mod
+    out = mod(
+        tokens.unsqueeze(0).to(mod.device), return_dict=True, output_attentions=True
     )
     # Return the output of the model, the tokenized prompt, number of tokens from the sentences (both sentences should have the same amount of tokens at this point)
     return out, tokens, true_sentence_token_n
@@ -183,8 +183,8 @@ def create_attention_mask(
 def compute_induction_head_scores(
     token_sequence: torch.Tensor, induction_mask: torch.Tensor, model_output
 ):
-    num_heads = model.config.num_attention_heads
-    num_layers = model.config.num_hidden_layers
+    num_heads = mod.config.num_attention_heads
+    num_layers = mod.config.num_hidden_layers
     sequence_length = token_sequence.shape[0]
 
     tril = torch.tril_indices(
@@ -400,8 +400,8 @@ def save_result_csv(model_name: str, results_path: str):
 
 
 def delete_model():
-    global model
-    del model
+    global mod
+    del mod
     gc.collect()
     if torch.backends.mps.is_available():
         torch.mps.empty_cache()  # Clear MPS GPU memory
