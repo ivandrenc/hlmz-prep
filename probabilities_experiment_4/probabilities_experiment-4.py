@@ -42,7 +42,7 @@ models = [QWEN_DeepSeek]
 # and we average them as well. Then we can plot these results for the top 5 heads as a barplot to see which heads are more
 # biased to output false information or correct information. Then we also compute the probabilities of the next token prediction
 # by looking into the logits, for the correct token, false token, and the top probable to predict token. We then knock out
-# the identified top induction heads one by one, and plotting the expected next token probability for the correct and false
+# the layers from the identified top induction heads one by one, and plotting the expected next token probability for the correct and false
 # token. We do this top-5-heads times, using all the examples, and finally we run the process without knocking out the heads
 # just to have some comparison data.
 
