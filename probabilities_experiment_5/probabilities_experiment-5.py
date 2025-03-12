@@ -33,11 +33,9 @@ CSV_PATH_DATASET = "../dataset/examples.csv"
 sns.set(style="whitegrid")
 
 
-
 models = [META_LLAMA_3_2_3B]
 
-# Experiment description: Same as experiment 4 but now we modify the prompts such that the last sentence (the one to
-# be completed by the LLM, ends with: ".\n Answer: "
+# Experiment description: Same as experiment 4 but now we try different types of prompt structure. 
 
 
 def initialize_model(model_name: str):
@@ -51,6 +49,7 @@ def initialize_model(model_name: str):
         tokenizer_name = model_name
     global tokenizer
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+
 
 def load_dataset(path_to_csv: str):
     # Check if the file at the given path exists
@@ -94,13 +93,25 @@ def feed_forward(
         "input_ids"
     ][0].shape[0]
     if true_sentence_token_n != false_sentence_token_n:
-        return None, None, None
+        return None, None, None, None
 
     # Extract all the words except the last one, split by space.
     sentence_without_last_token = "".join(true_sentence.rsplit(" ", 1)[:-1])
     # Append the sentence without the last token to the prompt, starting with the true_sentence. This is one-shot learning.
     # Add space token to avoid that the point token "." gets tokenized together with the beginning of the next sentence.
-    prompt = true_sentence + "\n" + false_sentence + "\n" + sentence_without_last_token + "\n" + "The answer is:"
+    instruction_prompt = "Now I will give the correct answer."
+    instruction_n = tokenizer(instruction_prompt, return_tensors="pt")["input_ids"][
+        0
+    ].shape[0]
+    prompt = (
+        true_sentence
+        + "\n"
+        + false_sentence
+        + "\n"
+        + instruction_prompt
+        + "\n"
+        + sentence_without_last_token
+    )
     token_sequence = tokenizer(prompt, return_tensors="pt")
     # print(f"prompt: {prompt}\ntoken_sequence: {token_sequence}\nNumber of tokens: {len(token_sequence['input_ids'][0])}")
     tokens = token_sequence["input_ids"][0]
@@ -111,7 +122,7 @@ def feed_forward(
         tokens.unsqueeze(0).to(model.device), return_dict=True, output_attentions=True
     )
     # Return the output of the model, the tokenized prompt, number of tokens from the sentences (both sentences should have the same amount of tokens at this point)
-    return out, tokens, true_sentence_token_n
+    return out, tokens, true_sentence_token_n, instruction_n
 
 
 def plot_induction_mask_with_plotly(induction_mask, induction_mask_text, prompt):
@@ -139,6 +150,7 @@ def plot_induction_mask_with_plotly(induction_mask, induction_mask_text, prompt)
 def create_attention_mask(
     token_sequence: torch.Tensor,
     token_number_sentence: int,
+    instruction_token_number: int,
     show_induction_mask: bool = False,
     prints_enabled: bool = False,
 ):
@@ -148,7 +160,12 @@ def create_attention_mask(
     induction_mask_text = np.full((sequence_length, sequence_length), "", dtype=object)
 
     # Start at the beginning of the second sentence (+1 since BOS token was not counted).
-    for i in range(token_number_sentence + 1, token_number_sentence * 3):
+    for i in range(token_number_sentence + 1, sequence_length):
+        if i in range(
+            token_number_sentence * 2 + 1,
+            token_number_sentence * 2 + instruction_token_number,
+        ):
+            continue
         if token_sequence[i] not in token_sequence[:i]:
             continue
         for j in range(i):
@@ -293,7 +310,9 @@ def logit_probability_extraction(models_output, token_sequence, token_number_sen
     probability_logits[repr(tokenizer.decode(second_sentence_last_token_idx))] = (
         second_sentence_prob.item()
     )
-    probability_logits["Predicted"] = {f"{repr(tokenizer.decode(top_token_idx))}": top_token_prob.item()}
+    probability_logits["Predicted"] = {
+        f"{repr(tokenizer.decode(top_token_idx))}": top_token_prob.item()
+    }
 
     probability_logits = json.dumps(probability_logits)
 
@@ -332,8 +351,12 @@ def display_attention_visualizations(
 def plot_attention_probabilities_tokens_heads_results(save_path: str):
     # Load the DataFrame (assuming df is already loaded)
     # Convert JSON strings to dictionaries
-    dataset["true_probs"] = dataset["attention_probability_first_sentence_token_top_induction_heads"].apply(json.loads)
-    dataset["false_probs"] = dataset["attention_probability_second_sentence_token_top_induction_heads"].apply(json.loads)
+    dataset["true_probs"] = dataset[
+        "attention_probability_first_sentence_token_top_induction_heads"
+    ].apply(json.loads)
+    dataset["false_probs"] = dataset[
+        "attention_probability_second_sentence_token_top_induction_heads"
+    ].apply(json.loads)
 
     # Convert probabilities to DataFrame
     true_df = pd.DataFrame(dataset["true_probs"].to_list())
@@ -357,7 +380,9 @@ def plot_attention_probabilities_tokens_heads_results(save_path: str):
     ax.get_figure().savefig(f"{save_path}-results-plot.png", dpi=300)
 
 
-def get_average_across_heads(induction_scores, induction_scores_switched, top_k_heads: int):
+def get_average_across_heads(
+    induction_scores, induction_scores_switched, top_k_heads: int
+):
     h_sum = defaultdict(float)
     h_count = defaultdict(int)
 
@@ -406,8 +431,8 @@ def delete_model():
 
 def calculate_induction_scores(first_sentence: str, second_sentence: str):
     # forward pass
-    models_output, token_sequence, token_number_sentence = feed_forward(
-        true_sentence=first_sentence, false_sentence=second_sentence
+    models_output, token_sequence, token_number_sentence, instruction_token_number = (
+        feed_forward(true_sentence=first_sentence, false_sentence=second_sentence)
     )
     if token_sequence is None:
         # first_sentence and second_sentence have different number of tokens after tokenizing them.
@@ -415,7 +440,9 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
 
     # Create attention mask
     induction_mask = create_attention_mask(
-        token_sequence=token_sequence, token_number_sentence=token_number_sentence
+        token_sequence=token_sequence,
+        token_number_sentence=token_number_sentence,
+        instruction_token_number=instruction_token_number,
     )
 
     # compute the induction scores
@@ -426,10 +453,12 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
     )
 
     # extract the token attention probability for the true and false sentence
-    true_token_probability, false_token_probability = extract_attn_probabilities_true_false_tokens(
-        heads=induction_scores,
-        models_output=models_output,
-        token_number_sentence=token_number_sentence,
+    true_token_probability, false_token_probability = (
+        extract_attn_probabilities_true_false_tokens(
+            heads=induction_scores,
+            models_output=models_output,
+            token_number_sentence=token_number_sentence,
+        )
     )
 
     # extract the probability of the next token to predict, for the correct token, false token and the top probable token
@@ -452,8 +481,12 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
 def attention_probs_for_heads(row, top_heads):
     probs_true = json.loads(row["attention_probability_first_sentence_token"])
     probs_false = json.loads(row["attention_probability_second_sentence_token"])
-    probs_true_second = json.loads(row["attention_probability_first_sentence_token_switched"])
-    probs_false_second = json.loads(row["attention_probability_second_sentence_token_switched"])
+    probs_true_second = json.loads(
+        row["attention_probability_first_sentence_token_switched"]
+    )
+    probs_false_second = json.loads(
+        row["attention_probability_second_sentence_token_switched"]
+    )
 
     data_true = {}
     data_false = {}
@@ -461,6 +494,7 @@ def attention_probs_for_heads(row, top_heads):
         data_true[key] = (probs_true[key] + probs_true_second[key]) / 2
         data_false[key] = (probs_false[key] + probs_false_second[key]) / 2
     return pd.Series([json.dumps(data_true), json.dumps(data_false)])
+
 
 def calculate_logit_probability(logits_example, logits_switched_example):
     logits_example = json.loads(logits_example)
@@ -478,15 +512,12 @@ def calculate_logit_probability(logits_example, logits_switched_example):
             prob_counts[token] += 1
 
     averaged_probs = {
-        token: prob_sums[token] / prob_counts[token]
-        for token in prob_sums
+        token: prob_sums[token] / prob_counts[token] for token in prob_sums
     }
     # Combine Predicted tokens
     predicted = {}
     if "Predicted" in logits_example:
-        predicted.update({
-            k: v for k, v in logits_example["Predicted"].items()
-        })
+        predicted.update({k: v for k, v in logits_example["Predicted"].items()})
     if "Predicted" in logits_switched_example:
         for k, v in logits_switched_example["Predicted"].items():
             if k in predicted:
@@ -537,39 +568,44 @@ def plot_logit_probs():
     # Create arrays for the DataFrame
     probabilities = correct_probs + valid_false_probs + predicted_probs
     categories = (
-        ['Correct'] * n_correct +
-        ['False'] * n_false +
-        ['Predicted'] * n_predicted
+        ["Correct"] * n_correct + ["False"] * n_false + ["Predicted"] * n_predicted
     )
     # Sentence indices should match the number of entries per category
     sentences = (
-        list(range(n_correct)) +  # Correct
-        [i for i, p in enumerate(false_probs) if p is not None] +  # False, only valid indices
-        [i for i, row in enumerate(dataset["result_logit_probability"])
-         for _ in json.loads(row)["Predicted"]]  # Predicted, repeat sentence index per pred token
+        list(range(n_correct))  # Correct
+        + [
+            i for i, p in enumerate(false_probs) if p is not None
+        ]  # False, only valid indices
+        + [
+            i
+            for i, row in enumerate(dataset["result_logit_probability"])
+            for _ in json.loads(row)["Predicted"]
+        ]  # Predicted, repeat sentence index per pred token
     )
 
     # Verify lengths match
-    assert len(probabilities) == len(categories) == len(sentences), \
-        f"Lengths mismatch: {len(probabilities)}, {len(categories)}, {len(sentences)}"
+    assert (
+        len(probabilities) == len(categories) == len(sentences)
+    ), f"Lengths mismatch: {len(probabilities)}, {len(categories)}, {len(sentences)}"
 
     # Create DataFrame
-    plot_data = pd.DataFrame({
-        'Probability': probabilities,
-        'Category': categories,
-        'Sentence': sentences
-    })
+    plot_data = pd.DataFrame(
+        {"Probability": probabilities, "Category": categories, "Sentence": sentences}
+    )
 
     # 1. Original Box Plot
     plt.figure(figsize=(12, 6))
-    sns.boxplot(x='Category', y='Probability', data=plot_data)
-    plt.title('Probability Distributions: Correct vs False vs Predicted (Box Plot)')
-    plt.ylabel('Probability')
+    sns.boxplot(x="Category", y="Probability", data=plot_data)
+    plt.title("Probability Distributions: Correct vs False vs Predicted (Box Plot)")
+    plt.ylabel("Probability")
     plt.grid(True, alpha=0.3)
-    means = plot_data.groupby('Category')['Probability'].mean()
+    means = plot_data.groupby("Category")["Probability"].mean()
     for i, mean in enumerate(means):
-        plt.axhline(y=mean, color='r', linestyle='--', alpha=0.5, xmin=i / 3, xmax=(i + 1) / 3)
+        plt.axhline(
+            y=mean, color="r", linestyle="--", alpha=0.5, xmin=i / 3, xmax=(i + 1) / 3
+        )
     plt.show()
+
 
 # Function to process probabilities and plot all subfolders in one plot
 def plot_logit_probs_all(data_with_folders, results_path):
@@ -589,25 +625,31 @@ def plot_logit_probs_all(data_with_folders, results_path):
             keys = [k for k in parsed.keys() if k != "Predicted"]
 
             # Correct token (first key)
-            plot_data.append({
-                "Subfolder": subfolder_name,
-                "Category": "Correct",
-                "Probability": parsed[keys[0]]
-            })
+            plot_data.append(
+                {
+                    "Subfolder": subfolder_name,
+                    "Category": "Correct",
+                    "Probability": parsed[keys[0]],
+                }
+            )
 
             # False token (second key, if it exists)
             if len(keys) > 1:
-                plot_data.append({
-                    "Subfolder": subfolder_name,
-                    "Category": "False",
-                    "Probability": parsed[keys[1]]
-                })
+                plot_data.append(
+                    {
+                        "Subfolder": subfolder_name,
+                        "Category": "False",
+                        "Probability": parsed[keys[1]],
+                    }
+                )
             else:
-                plot_data.append({
-                    "Subfolder": subfolder_name,
-                    "Category": "False",
-                    "Probability": 0  # Default to 0 if no false token
-                })
+                plot_data.append(
+                    {
+                        "Subfolder": subfolder_name,
+                        "Category": "False",
+                        "Probability": 0,  # Default to 0 if no false token
+                    }
+                )
 
     # Convert to DataFrame
     plot_df = pd.DataFrame(plot_data)
@@ -649,23 +691,30 @@ def knock_out_attention_layer(layer_idx):
 
     # Knockout entire layer
     attn.o_proj.weight[:] = 0
-    if hasattr(attn.o_proj, 'bias') and attn.o_proj.bias is not None:
+    if hasattr(attn.o_proj, "bias") and attn.o_proj.bias is not None:
         attn.o_proj.bias[:] = 0
 
 
 def extract_integers(input_string):
     # Split the string at '_'
-    parts = input_string.split('_')
+    parts = input_string.split("_")
 
     # Extract integer after 'L' from first part
-    l_value = int(parts[0].replace('L', ''))
+    l_value = int(parts[0].replace("L", ""))
 
     # Extract integer after 'H' from second part
-    h_value = int(parts[1].replace('H', ''))
+    h_value = int(parts[1].replace("H", ""))
 
     return l_value, h_value
 
-def run_experiment(dataset_csv_file_path: str, model_name: str, results_path: str, knockout_layers: bool = False, layer: int = None):
+
+def run_experiment(
+    dataset_csv_file_path: str,
+    model_name: str,
+    results_path: str,
+    knockout_layers: bool = False,
+    layer: int = None,
+):
     print(
         f"Using device: {torch.device('mps') if torch.backends.mps.is_available() else 'cpu'}"
     )
@@ -737,18 +786,28 @@ def run_experiment(dataset_csv_file_path: str, model_name: str, results_path: st
     # score for each head, sort the heads by desc induction score and pick the top 5.
     induction_scores = dataset["induction_scores"]
     induction_scores_switched = dataset["induction_scores_switched"]
-    top_heads = get_average_across_heads(induction_scores=induction_scores, induction_scores_switched=induction_scores_switched, top_k_heads=5)
+    top_heads = get_average_across_heads(
+        induction_scores=induction_scores,
+        induction_scores_switched=induction_scores_switched,
+        top_k_heads=5,
+    )
     # print(f"The top heads with the avg induction score for the first variant are: {top_heads}\n")
 
     # Calculate the attention probabilities of the token from the first sentence and token from the second sentence from the top heads over the
     # example and the switched variant. We average the attention probabilities.
-    dataset[["attention_probability_first_sentence_token_top_induction_heads", "attention_probability_second_sentence_token_top_induction_heads"]] = dataset.apply(
-        lambda row: attention_probs_for_heads(row, top_heads), axis=1
-    )
+    dataset[
+        [
+            "attention_probability_first_sentence_token_top_induction_heads",
+            "attention_probability_second_sentence_token_top_induction_heads",
+        ]
+    ] = dataset.apply(lambda row: attention_probs_for_heads(row, top_heads), axis=1)
 
     # Calculate the logit probability of the first sentence token, first sentence token and the most probable token, average them as well.
     dataset["result_logit_probability"] = dataset.apply(
-        lambda row: calculate_logit_probability(row["logit_probabilities"], row["logit_probabilities_switched"]), axis=1
+        lambda row: calculate_logit_probability(
+            row["logit_probabilities"], row["logit_probabilities_switched"]
+        ),
+        axis=1,
     )
 
     print("Done calculating the results. Saving results...")
@@ -767,10 +826,9 @@ def run_experiment(dataset_csv_file_path: str, model_name: str, results_path: st
     # # Plot the results of the logit probabilities
     # plot_logit_probs()
 
-
-
     # return the top found heads
     return top_heads
+
 
 def aggregate_results(results_path):
     results_path = Path(results_path)
@@ -785,6 +843,7 @@ def aggregate_results(results_path):
             data_with_folders.append({sub_folder: filtered_df})
 
     return data_with_folders
+
 
 def main():
     # ### Experiment Start
@@ -805,22 +864,30 @@ def main():
     layers = []
     for l_h in top_heads.keys():
         # get the layer from the string
-        layer, _= extract_integers(l_h)
+        layer, _ = extract_integers(l_h)
         layers.append(layer)
 
-    for layer in layers:
-        # Run the experiment, knocking out head by head and save results.
-        run_experiment(dataset_csv_file_path=CSV_PATH_DATASET, model_name=models[0], results_path=results_path, knockout_layers=True, layer=layer)
+    knockout = True
+    if knockout:
+        for layer in layers:
+            # Run the experiment, knocking out head by head and save results.
+            run_experiment(
+                dataset_csv_file_path=CSV_PATH_DATASET,
+                model_name=models[0],
+                results_path=results_path,
+                knockout_layers=knockout,
+                layer=layer,
+            )
 
-        # print(f"The top heads for the experiment after knocking out head {head} at layer {layer} are {knockout_top_heads}.")
-        delete_model()
-        initialize_model(model_name=models[0]) # reinit the model
+            # print(f"The top heads for the experiment after knocking out head {head} at layer {layer} are {knockout_top_heads}.")
+            delete_model()
+            initialize_model(model_name=models[0])  # reinit the model
 
     # aggregate the results and plot them
     data_with_folders = aggregate_results(results_path)
-    plot_logit_probs_all(data_with_folders=data_with_folders, results_path=Path(results_path))
-
-
+    plot_logit_probs_all(
+        data_with_folders=data_with_folders, results_path=Path(results_path)
+    )
 
     # Delete the model loaded in memory
     delete_model()
