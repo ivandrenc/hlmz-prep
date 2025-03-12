@@ -33,9 +33,9 @@ CSV_PATH_DATASET = "../dataset/examples.csv"
 sns.set(style="whitegrid")
 
 
-models = [META_LLAMA_3_2_3B]
+models = [GOOGLE_GEMMA_2_2B]
 
-# Experiment description: Same as experiment 4 but now we try different types of prompt structure. 
+# Experiment description: Same as experiment 4 but now we try different types of prompt structure.
 
 
 def initialize_model(model_name: str):
@@ -695,6 +695,16 @@ def knock_out_attention_layer(layer_idx):
         attn.o_proj.bias[:] = 0
 
 
+    layer_idx = 6
+    layer = model.model.layers[int(layer_idx)]  # get the layer of interest
+    attn = layer.self_attn  # get the head of interest
+
+    # Knockout entire layer
+    attn.o_proj.weight[:] = 0
+    if hasattr(attn.o_proj, "bias") and attn.o_proj.bias is not None:
+        attn.o_proj.bias[:] = 0
+
+
 def extract_integers(input_string):
     # Split the string at '_'
     parts = input_string.split("_")
@@ -848,7 +858,7 @@ def aggregate_results(results_path):
 def main():
     # ### Experiment Start
     print("Your current working directory:", os.getcwd())
-    results_path = "results_meta_new_prompt"
+    results_path = "results_google_new_prompt"
 
     # Calculate running the experiment without knocking out any attention heads -> return top found heads
     # Results are in columns "attention_probability_first_sentence_token_top_induction_heads,
@@ -858,6 +868,8 @@ def main():
         dataset_csv_file_path=CSV_PATH_DATASET,
         model_name=models[0],
         results_path=results_path,
+        knockout_layers=True,
+        layer=14
     )
 
     # print(f"The top heads for the experiment withouth knocking out heads are: {top_heads}.")
@@ -867,7 +879,7 @@ def main():
         layer, _ = extract_integers(l_h)
         layers.append(layer)
 
-    knockout = True
+    knockout = False
     if knockout:
         for layer in layers:
             # Run the experiment, knocking out head by head and save results.

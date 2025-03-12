@@ -33,7 +33,7 @@ sns.set(style="whitegrid")
 
 
 
-models = [META_LLAMA_3_2_3B]
+models = [GOOGLE_GEMMA_2_2B]
 
 # Experiment description: We run the model with the examples in no order and with the order switched, find the top 5
 # induction heads by looking into the induction scores of both ran examples, average the scores across examples and
@@ -70,10 +70,10 @@ def load_dataset(path_to_csv: str):
     dataset = df
 
     # Create a new column "token_probability" for saving up the probabilites of the studied token for all prompts. Initially, 0.
-    dataset["token_probability_true_sentence"] = 0
-    dataset["token_probability_false_sentence"] = 0
-    dataset["token_probability_true_sentence_switched"] = 0
-    dataset["token_probability_false_sentence_switched"] = 0
+    dataset["attention_probability_first_sentence_token"] = 0
+    dataset["attention_probability_second_sentence_token"] = 0
+    dataset["attention_probability_first_sentence_token_switched"] = 0
+    dataset["attention_probability_second_sentence_token_switched"] = 0
 
 
 def print_colored_separator(
@@ -338,8 +338,12 @@ def display_attention_visualizations(
 def plot_attention_probabilities_tokens_heads_results(save_path: str):
     # Load the DataFrame (assuming df is already loaded)
     # Convert JSON strings to dictionaries
-    dataset["true_probs"] = dataset["result_true_token"].apply(json.loads)
-    dataset["false_probs"] = dataset["result_false_token"].apply(json.loads)
+    dataset["true_probs"] = dataset[
+        "attention_probability_first_sentence_token_top_induction_heads"
+    ].apply(json.loads)
+    dataset["false_probs"] = dataset[
+        "attention_probability_second_sentence_token_top_induction_heads"
+    ].apply(json.loads)
 
     # Convert probabilities to DataFrame
     true_df = pd.DataFrame(dataset["true_probs"].to_list())
@@ -363,12 +367,20 @@ def plot_attention_probabilities_tokens_heads_results(save_path: str):
     ax.get_figure().savefig(f"{save_path}-results-plot.png", dpi=300)
 
 
-def get_average_across_heads(head_set, top_k_heads: int):
+def get_average_across_heads(
+    induction_scores, induction_scores_switched, top_k_heads: int
+):
     h_sum = defaultdict(float)
     h_count = defaultdict(int)
 
-    for induction_scores in head_set:
-        for l_h in induction_scores.items():
+    for data in induction_scores:
+        for l_h in data.items():
+            l_h_key, value = l_h
+            h_sum[l_h_key] = h_sum[l_h_key] + value
+            h_count[l_h_key] = h_count[l_h_key] + 1
+
+    for data in induction_scores_switched:
+        for l_h in data.items():
             l_h_key, value = l_h
             h_sum[l_h_key] = h_sum[l_h_key] + value
             h_count[l_h_key] = h_count[l_h_key] + 1
@@ -379,13 +391,6 @@ def get_average_across_heads(head_set, top_k_heads: int):
         sorted(h_average.items(), key=itemgetter(1), reverse=True)[:top_k_heads]
     )
     return sorted_heads
-
-
-def average_induction_scores(head_set, slice_top_k_heads: int):
-    avg_induction_score_heads_sorted = get_average_across_heads(
-        head_set=head_set, top_k_heads=slice_top_k_heads
-    )
-    return avg_induction_score_heads_sorted
 
 
 def save_result_csv(model_name: str, results_path: str):
@@ -456,10 +461,14 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
 
 
 def attention_probs_for_heads(row, top_heads):
-    probs_true = json.loads(row["token_probability_true_sentence"])
-    probs_false = json.loads(row["token_probability_false_sentence"])
-    probs_true_second = json.loads(row["token_probability_true_sentence_switched"])
-    probs_false_second = json.loads(row["token_probability_false_sentence_switched"])
+    probs_true = json.loads(row["attention_probability_first_sentence_token"])
+    probs_false = json.loads(row["attention_probability_second_sentence_token"])
+    probs_true_second = json.loads(
+        row["attention_probability_first_sentence_token_switched"]
+    )
+    probs_false_second = json.loads(
+        row["attention_probability_second_sentence_token_switched"]
+    )
 
     data_true = {}
     data_false = {}
@@ -689,9 +698,9 @@ def run_experiment(dataset_csv_file_path: str, model_name: str, results_path: st
     dataset[
         [
             "induction_scores",
-            "token_probability_true_sentence",
-            "token_probability_false_sentence",
-            "logits_probs",
+            "attention_probability_first_sentence_token",
+            "attention_probability_second_sentence_token",
+            "logit_probabilities",
         ]
     ] = dataset.apply(
         lambda row: calculate_induction_scores(
@@ -707,9 +716,9 @@ def run_experiment(dataset_csv_file_path: str, model_name: str, results_path: st
     dataset[
         [
             "induction_scores_switched",
-            "token_probability_true_sentence_switched",
-            "token_probability_false_sentence_switched",
-            "logits_probs_switched",
+            "attention_probability_first_sentence_token_switched",
+            "attention_probability_second_sentence_token_switched",
+            "logit_probabilities_switched",
         ]
     ] = dataset.apply(
         lambda row: calculate_induction_scores(
@@ -725,8 +734,8 @@ def run_experiment(dataset_csv_file_path: str, model_name: str, results_path: st
     rows_to_drop = dataset[
         dataset[
             [
-                "token_probability_true_sentence",
-                "token_probability_false_sentence",
+                "attention_probability_first_sentence_token",
+                "attention_probability_second_sentence_token",
             ]
         ]
         .isna()
@@ -738,37 +747,41 @@ def run_experiment(dataset_csv_file_path: str, model_name: str, results_path: st
 
     dataset.dropna(
         subset=[
-            "token_probability_true_sentence",
-            "token_probability_false_sentence",
+            "attention_probability_first_sentence_token",
+            "attention_probability_second_sentence_token",
         ],
         inplace=True,
     )
 
-    head_set = dataset["induction_scores"]
-    top_heads = average_induction_scores(head_set=head_set, slice_top_k_heads=5)
+    # From the computed induction scores for the normal variant and switched variant, we compute the average induction
+    # score for each head, sort the heads by desc induction score and pick the top 5.
+    induction_scores = dataset["induction_scores"]
+    induction_scores_switched = dataset["induction_scores_switched"]
+    top_heads = get_average_across_heads(
+        induction_scores=induction_scores,
+        induction_scores_switched=induction_scores_switched,
+        top_k_heads=5,
+    )
     # print(f"The top heads with the avg induction score for the first variant are: {top_heads}\n")
 
-    head_set_switched = dataset["induction_scores_switched"]
-    top_heads_switched = average_induction_scores(
-        head_set=head_set_switched, slice_top_k_heads=5
-    )
-    # print(f"The top heads with the avg induction score for the second variant are: {top_heads}\n")
+    # Calculate the attention probabilities of the token from the first sentence and token from the second sentence from the top heads over the
+    # example and the switched variant. We average the attention probabilities.
+    dataset[
+        [
+            "attention_probability_first_sentence_token_top_induction_heads",
+            "attention_probability_second_sentence_token_top_induction_heads",
+        ]
+    ] = dataset.apply(lambda row: attention_probs_for_heads(row, top_heads), axis=1)
 
-    if not top_heads_switched.keys() == top_heads.keys():
-        top_heads.update(top_heads_switched)
-
-    # Calculate the attention probabilities of the correct token and false token from the top heads over the
-    # example and the switched variant
-    dataset[["result_true_token", "result_false_token"]] = dataset.apply(
-        lambda row: attention_probs_for_heads(row, top_heads), axis=1
-    )
-
-    # Calculate the logit probability of the correct token, false token and the most probable token
+    # Calculate the logit probability of the first sentence token, first sentence token and the most probable token, average them as well.
     dataset["result_logit_probability"] = dataset.apply(
-        lambda row: calculate_logit_probability(row["logits_probs"], row["logits_probs_switched"]), axis=1
+        lambda row: calculate_logit_probability(
+            row["logit_probabilities"], row["logit_probabilities_switched"]
+        ),
+        axis=1,
     )
 
-    # print("Done calculating the results. Saving results...")
+    print("Done calculating the results. Saving results...")
 
     # Create CSV result files saved in folders respective to the used LLM.
     if layer or head is not None:
@@ -806,7 +819,7 @@ def aggregate_results(results_path):
 def main():
     # ### Experiment Start
     print("Your current working directory:", os.getcwd())
-    results_path = "results_meta_layers_knockout"
+    results_path = "results_google_knockout"
 
     # Calculate running the experiment without knocking out any attention heads -> return top found heads
     # Results are in columns "result_true_token, result_false_token"
