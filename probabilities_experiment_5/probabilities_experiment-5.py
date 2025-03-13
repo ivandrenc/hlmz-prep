@@ -685,7 +685,6 @@ def plot_logit_probs_all(data_with_folders, results_path):
 def knock_out_attention_layer(layer_idx):
     # note that this function modifies the model in place and does not return anything
     # the changes you make are not recoverable, so you may want to reload the model to undo them
-
     layer = model.model.layers[int(layer_idx)]  # get the layer of interest
     attn = layer.self_attn  # get the head of interest
 
@@ -693,17 +692,6 @@ def knock_out_attention_layer(layer_idx):
     attn.o_proj.weight[:] = 0
     if hasattr(attn.o_proj, "bias") and attn.o_proj.bias is not None:
         attn.o_proj.bias[:] = 0
-
-
-    layer_idx = 6
-    layer = model.model.layers[int(layer_idx)]  # get the layer of interest
-    attn = layer.self_attn  # get the head of interest
-
-    # Knockout entire layer
-    attn.o_proj.weight[:] = 0
-    if hasattr(attn.o_proj, "bias") and attn.o_proj.bias is not None:
-        attn.o_proj.bias[:] = 0
-
 
 def extract_integers(input_string):
     # Split the string at '_'
@@ -868,8 +856,6 @@ def main():
         dataset_csv_file_path=CSV_PATH_DATASET,
         model_name=models[0],
         results_path=results_path,
-        knockout_layers=True,
-        layer=14
     )
 
     # print(f"The top heads for the experiment withouth knocking out heads are: {top_heads}.")
@@ -879,7 +865,7 @@ def main():
         layer, _ = extract_integers(l_h)
         layers.append(layer)
 
-    knockout = False
+    knockout = True 
     if knockout:
         for layer in layers:
             # Run the experiment, knocking out head by head and save results.
