@@ -20,16 +20,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 torch.set_grad_enabled(False)  # to disable gradients -> faster computiations
 torch.set_printoptions(sci_mode=False)
 # Ensure GPU acceleration is enabled on Mac
-device = (
-    torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-)
-model = None
-tokenizer = None
+device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 META_LLAMA_3_2_3B = "meta-llama/Llama-3.2-3B"
 GOOGLE_GEMMA_2_2B = "google/gemma-2-2b"
 QWEN_DeepSeek = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-dataset = {}
-CSV_PATH_DATASET = "../dataset/examples.csv"
+CSV_PATH_DATASET = "dataset/examples.csv"
 sns.set(style="whitegrid")
 
 
@@ -39,34 +34,23 @@ models = [GOOGLE_GEMMA_2_2B]
 
 
 def initialize_model(model_name: str):
-    tokenizer_name = model_name
-    # Initialize model and tokenizer
-    global model
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name, device_map="auto", torch_dtype=torch.bfloat16
-    )
-    if not tokenizer_name:
-        tokenizer_name = model_name
-    global tokenizer
+    tokenizer_name = model_name if model_name else model_name
+    model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", torch_dtype=torch.bfloat16)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-
+    return model, tokenizer
 
 def load_dataset(path_to_csv: str):
     # Check if the file at the given path exists
     if os.path.exists(path_to_csv):
         df = pd.read_csv(path_to_csv)
+        # Create a new column "token_probability" for saving up the probabilites of the studied token for all prompts. Initially, 0.
+        df["attention_probability_first_sentence_token"] = 0
+        df["attention_probability_second_sentence_token"] = 0
+        df["attention_probability_first_sentence_token_switched"] = 0
+        df["attention_probability_second_sentence_token_switched"] = 0
+        return df
     else:
-        print("File does not exist.")
-        exit(1)
-
-    global dataset
-    dataset = df
-
-    # Create a new column "token_probability" for saving up the probabilites of the studied token for all prompts. Initially, 0.
-    dataset["attention_probability_first_sentence_token"] = 0
-    dataset["attention_probability_second_sentence_token"] = 0
-    dataset["attention_probability_first_sentence_token_switched"] = 0
-    dataset["attention_probability_second_sentence_token_switched"] = 0
+        raise FileNotFoundError(f"File {path_to_csv} does not exist.")
 
 
 def print_colored_separator(
@@ -81,6 +65,8 @@ def print_colored_separator(
 def feed_forward(
     true_sentence: str,
     false_sentence: str,
+    model,
+    tokenizer,
     prints_enabled: bool = False,
 ):
     print_colored_separator(prints_enabled)
@@ -117,10 +103,10 @@ def feed_forward(
     tokens = token_sequence["input_ids"][0]
 
     # Feed forward to the model
-    global model
-    out = model(
-        tokens.unsqueeze(0).to(model.device), return_dict=True, output_attentions=True
-    )
+    with torch.no_grad():
+        out = model(
+            tokens.unsqueeze(0).to(model.device), return_dict=True, output_attentions=True
+        )
     # Return the output of the model, the tokenized prompt, number of tokens from the sentences (both sentences should have the same amount of tokens at this point)
     return out, tokens, true_sentence_token_n, instruction_n
 
@@ -145,12 +131,14 @@ def plot_induction_mask_with_plotly(induction_mask, induction_mask_text, prompt)
     )
 
     fig.show()
+    del fig
 
 
 def create_attention_mask(
     token_sequence: torch.Tensor,
     token_number_sentence: int,
     instruction_token_number: int,
+    tokenizer,
     show_induction_mask: bool = False,
     prints_enabled: bool = False,
 ):
@@ -196,7 +184,7 @@ def create_attention_mask(
 
 
 def compute_induction_head_scores(
-    token_sequence: torch.Tensor, induction_mask: torch.Tensor, model_output
+    token_sequence: torch.Tensor, induction_mask: torch.Tensor, model_output, model
 ):
     num_heads = model.config.num_attention_heads
     num_layers = model.config.num_hidden_layers
@@ -227,6 +215,7 @@ def create_heatmap(induction_scores: torch.Tensor):
     ax.set_ylabel("Layer #")
     ax.set_xlabel("Head #")
     plt.show()
+    plt.close()
 
 
 def sort_filter_high_scoring_induction_heads(
@@ -255,6 +244,7 @@ def sort_filter_high_scoring_induction_heads(
             print(f"Layer: {layer}\nHead: {head}\nInduction Score: {induction_score}")
             plt.imshow(model_output["attentions"][layer][0][head].cpu().float())
             plt.show()
+            plt.close()
             print()
     return sorted_indices
 
@@ -290,7 +280,7 @@ def extract_attn_probabilities_true_false_tokens(
     return json.dumps(result_true_sentence), json.dumps(result_false_sentence)
 
 
-def logit_probability_extraction(models_output, token_sequence, token_number_sentence):
+def logit_probability_extraction(models_output, token_sequence, token_number_sentence, tokenizer):
     # extract the logit probability for last token
     probabilities = F.softmax(models_output["logits"].squeeze(), dim=-1)
 
@@ -323,6 +313,7 @@ def save_probability(
     token_probability: int,
     example_id: int,
     column_name_probability: str,
+    dataset: pd.DataFrame,
     prints_enabled: bool = False,
 ):
     if dataset.empty:
@@ -338,7 +329,7 @@ def save_probability(
 
 
 def display_attention_visualizations(
-    head_indices: torch.Tensor, token_sequence: torch.Tensor, models_output
+    head_indices: torch.Tensor, token_sequence: torch.Tensor, models_output, tokenizer
 ):
     # Display attention diagrams
     tokens_vis = tokenizer.tokenize(tokenizer.decode(token_sequence.squeeze()))
@@ -348,7 +339,7 @@ def display_attention_visualizations(
     ), attention_heads(models_output["attentions"][layer][0], tokens_vis)
 
 
-def plot_attention_probabilities_tokens_heads_results(save_path: str):
+def plot_attention_probabilities_tokens_heads_results(save_path: str, dataset: pd.DataFrame):
     # Load the DataFrame (assuming df is already loaded)
     # Convert JSON strings to dictionaries
     dataset["true_probs"] = dataset[
@@ -406,8 +397,7 @@ def get_average_across_heads(
     return sorted_heads
 
 
-def save_result_csv(model_name: str, results_path: str):
-    global dataset
+def save_result_csv(dataset: pd.DataFrame, model_name: str, results_path: str):
     model_name_folder = model_name.split("/")
     folder_path = results_path + "/" + model_name_folder[0]
     if not os.path.exists(folder_path):
@@ -421,18 +411,22 @@ def save_result_csv(model_name: str, results_path: str):
     return model_and_path_image
 
 
-def delete_model():
-    global model
-    del model
+def delete_model(model, tokenizer):
+    if model is not None:
+        del model
+    if tokenizer is not None:
+        del tokenizer
     gc.collect()
     if torch.backends.mps.is_available():
-        torch.mps.empty_cache()  # Clear MPS GPU memory
+        torch.mps.empty_cache()
+    elif torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
-def calculate_induction_scores(first_sentence: str, second_sentence: str):
+def calculate_induction_scores(first_sentence: str, second_sentence: str, model, tokenizer):
     # forward pass
     models_output, token_sequence, token_number_sentence, instruction_token_number = (
-        feed_forward(true_sentence=first_sentence, false_sentence=second_sentence)
+        feed_forward(true_sentence=first_sentence, false_sentence=second_sentence, model=model, tokenizer=tokenizer)
     )
     if token_sequence is None:
         # first_sentence and second_sentence have different number of tokens after tokenizing them.
@@ -443,6 +437,7 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
         token_sequence=token_sequence,
         token_number_sentence=token_number_sentence,
         instruction_token_number=instruction_token_number,
+        tokenizer=tokenizer,
     )
 
     # compute the induction scores
@@ -450,6 +445,7 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
         token_sequence=token_sequence,
         induction_mask=induction_mask,
         model_output=models_output,
+        model=model,
     )
 
     # extract the token attention probability for the true and false sentence
@@ -466,6 +462,7 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
         models_output=models_output,
         token_sequence=token_sequence,
         token_number_sentence=token_number_sentence,
+        tokenizer=tokenizer,
     )
 
     return pd.Series(
@@ -534,7 +531,7 @@ def calculate_logit_probability(logits_example, logits_switched_example):
     return json.dumps(result)
 
 
-def plot_logit_probs():
+def plot_logit_probs(dataset: pd.DataFrame):
     # Process data
     correct_probs = []
     false_probs = []
@@ -605,6 +602,7 @@ def plot_logit_probs():
             y=mean, color="r", linestyle="--", alpha=0.5, xmin=i / 3, xmax=(i + 1) / 3
         )
     plt.show()
+    plt.close()
 
 
 # Function to process probabilities and plot all subfolders in one plot
@@ -657,7 +655,7 @@ def plot_logit_probs_all(data_with_folders, results_path):
     # Create the plot
     plt.figure(figsize=(12, 6))  # Adjust size based on number of subfolders
     sns.barplot(
-        x="Subfolder",
+        x="Knocked out layers",
         y="Probability",
         hue="Category",
         data=plot_df,
@@ -665,7 +663,7 @@ def plot_logit_probs_all(data_with_folders, results_path):
     )
 
     # Customize plot
-    plt.xlabel("Subfolder")
+    plt.xlabel("Knocked out layers")
     plt.ylabel("Mean Probability")
     plt.title("Mean Probabilities of Correct vs False Tokens Across Subfolders")
     plt.xticks(rotation=45, ha="right")  # Rotate labels for readability
@@ -674,15 +672,16 @@ def plot_logit_probs_all(data_with_folders, results_path):
     plt.tight_layout()
 
     # Save the plot in the parent directory (optional)
-    output_file = Path(results_path) / "exp_4_logit_probs.png"
+    output_file = Path(results_path) / "exp_5_results.png"
     plt.savefig(output_file, dpi=300, bbox_inches="tight")
     print(f"Saved plot: {output_file}")
 
     # Show the plot (optional, remove if only saving is needed)
     plt.show()
+    plt.close()
 
 
-def knock_out_attention_layer(layer_idx):
+def knock_out_attention_layer(layer_idx, model):
     # note that this function modifies the model in place and does not return anything
     # the changes you make are not recoverable, so you may want to reload the model to undo them
     layer = model.model.layers[int(layer_idx)]  # get the layer of interest
@@ -710,6 +709,8 @@ def run_experiment(
     dataset_csv_file_path: str,
     model_name: str,
     results_path: str,
+    model,
+    tokenizer,
     knockout_layers: bool = False,
     layer: int = None,
 ):
@@ -717,11 +718,10 @@ def run_experiment(
         f"Using device: {torch.device('mps') if torch.backends.mps.is_available() else 'cpu'}"
     )
     if knockout_layers:
-        knock_out_attention_layer(layer_idx=layer)
+        knock_out_attention_layer(layer_idx=layer, model=model)
 
-    load_dataset(path_to_csv=dataset_csv_file_path)
+    dataset = load_dataset(path_to_csv=dataset_csv_file_path)
 
-    global dataset
     dataset[
         [
             "induction_scores",
@@ -733,6 +733,8 @@ def run_experiment(
         lambda row: calculate_induction_scores(
             first_sentence=row["true_sentence"],
             second_sentence=row["false_sentence"],
+            model=model,
+            tokenizer=tokenizer,
         ),
         axis=1,
     )
@@ -751,6 +753,8 @@ def run_experiment(
         lambda row: calculate_induction_scores(
             first_sentence=row["false_sentence"],
             second_sentence=row["true_sentence"],
+            model=model,
+            tokenizer=tokenizer,
         ),
         axis=1,
     )
@@ -816,7 +820,7 @@ def run_experiment(
     else:
         results_path = results_path + "/" + "main" + "/"
 
-    model_image_path = save_result_csv(model_name=model_name, results_path=results_path)
+    model_image_path = save_result_csv(dataset=dataset, model_name=model_name, results_path=results_path)
 
     # # Plot the results
     # plot_attention_probabilities_tokens_heads_results(save_path=model_image_path)
@@ -844,51 +848,57 @@ def aggregate_results(results_path):
 
 
 def main():
-    # ### Experiment Start
-    print("Your current working directory:", os.getcwd())
-    results_path = "results_google_new_prompt"
+    model, tokenizer = None, None
+    try:
+        # ### Experiment Start
+        print("Your current working directory:", os.getcwd())
+        results_path = "results_google_new_prompt"
 
-    # Calculate running the experiment without knocking out any attention heads -> return top found heads
-    # Results are in columns "attention_probability_first_sentence_token_top_induction_heads,
-    # attention_probability_second_sentence_token_top_induction_heads"
-    initialize_model(model_name=models[0])
-    top_heads = run_experiment(
-        dataset_csv_file_path=CSV_PATH_DATASET,
-        model_name=models[0],
-        results_path=results_path,
-    )
+        # Calculate running the experiment without knocking out any attention heads -> return top found heads
+        # Results are in columns "attention_probability_first_sentence_token_top_induction_heads,
+        # attention_probability_second_sentence_token_top_induction_heads"
+        model, tokenizer = initialize_model(model_name=models[0])
+        top_heads = run_experiment(
+            dataset_csv_file_path=CSV_PATH_DATASET,
+            model_name=models[0],
+            results_path=results_path,
+            model=model,
+            tokenizer=tokenizer,
+        )
 
-    # print(f"The top heads for the experiment withouth knocking out heads are: {top_heads}.")
-    layers = []
-    for l_h in top_heads.keys():
-        # get the layer from the string
-        layer, _ = extract_integers(l_h)
-        layers.append(layer)
+        # print(f"The top heads for the experiment withouth knocking out heads are: {top_heads}.")
+        layers = []
+        for l_h in top_heads.keys():
+            # get the layer from the string
+            layer, _ = extract_integers(l_h)
+            layers.append(layer)
 
-    knockout = True 
-    if knockout:
-        for layer in layers:
-            # Run the experiment, knocking out head by head and save results.
-            run_experiment(
-                dataset_csv_file_path=CSV_PATH_DATASET,
-                model_name=models[0],
-                results_path=results_path,
-                knockout_layers=knockout,
-                layer=layer,
-            )
+        knockout = True 
+        if knockout:
+            for layer in layers:
+                # Run the experiment, knocking out head by head and save results.
+                run_experiment(
+                    dataset_csv_file_path=CSV_PATH_DATASET,
+                    model_name=models[0],
+                    results_path=results_path,
+                    model=model,
+                    tokenizer=tokenizer,
+                    knockout_layers=knockout,
+                    layer=layer,
+                )
 
-            # print(f"The top heads for the experiment after knocking out head {head} at layer {layer} are {knockout_top_heads}.")
-            delete_model()
-            initialize_model(model_name=models[0])  # reinit the model
+                # print(f"The top heads for the experiment after knocking out head {head} at layer {layer} are {knockout_top_heads}.")
+                delete_model(model=model, tokenizer=tokenizer)
+                initialize_model(model_name=models[0])  # reinit the model
 
-    # aggregate the results and plot them
-    data_with_folders = aggregate_results(results_path)
-    plot_logit_probs_all(
-        data_with_folders=data_with_folders, results_path=Path(results_path)
-    )
-
-    # Delete the model loaded in memory
-    delete_model()
+        # aggregate the results and plot them
+        data_with_folders = aggregate_results(results_path)
+        plot_logit_probs_all(
+            data_with_folders=data_with_folders, results_path=Path(results_path)
+        )
+    finally:
+        # Delete the model loaded in memory
+        delete_model(model=model, tokenizer=tokenizer)
 
 
 if __name__ == "__main__":
