@@ -27,7 +27,8 @@ tokenizer = None
 META_LLAMA_3_2_3B = "meta-llama/Llama-3.2-3B"
 GOOGLE_GEMMA_2_2B = "google/gemma-2-2b"
 dataset = {}
-CSV_PATH_DATASET = "../dataset/examples.csv"
+CSV_PATH_DATASET = "dataset/examples.csv"
+num_examples = 1
 
 
 models = [META_LLAMA_3_2_3B]
@@ -116,6 +117,10 @@ def feed_forward(
 
 
 def plot_induction_mask_with_plotly(induction_mask, induction_mask_text, prompt):
+    # specify how many examples to plot
+    global num_examples
+    if num_examples <= 0:
+        return
     # Create a Heatmap with the numeric mask (z) and attach the text
     heatmap = go.Heatmap(
         z=induction_mask,
@@ -127,14 +132,31 @@ def plot_induction_mask_with_plotly(induction_mask, induction_mask_text, prompt)
 
     fig = go.Figure(data=[heatmap])
 
+    # Truncate prompt if too long and wrap the title text
+    truncated_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
+    
     # Make the squares actually square by linking x/y scales
     fig.update_layout(
         xaxis=dict(scaleanchor="y", scaleratio=1),
         yaxis=dict(autorange="reversed"),  # Reverse y-axis so row 0 is at top
-        title=f"Induction Mask for prompt: {prompt}\n",
+        title={
+            'text': f"Induction Mask for prompt: {truncated_prompt}",
+            'font': {'size': 12},
+            'xanchor': 'center',
+            'yanchor': 'top',
+            'x': 0.5
+        },
+        # Enable title wrapping
+        autosize=True,
+        margin=dict(t=80)  # Increase top margin to accommodate wrapped title
     )
-
+    
+    # Save the plot as a PDF
+    fig.write_image("induction_mask_plot_1.pdf")
+    
+    # Display the plot
     fig.show()
+    num_examples -= 1
 
 
 def create_attention_mask(
@@ -167,15 +189,47 @@ def create_attention_mask(
                 )
 
     if show_induction_mask:
-        # print("Induction Mask:\n")
-        # print(induction_mask)
-        # print()
-        # print("Induction Mask plot:\n")
-        # plt.imshow(induction_mask)
-        # plt.show()
-        plot_induction_mask_with_plotly(
-            induction_mask, induction_mask_text, prompt=tokenizer.decode(token_sequence)
-        )
+        global num_examples
+        if num_examples > 0:
+            print("Induction Mask:\n")
+            print(induction_mask)
+            print()
+            print("Induction Mask plot:\n")
+            
+            # Configure matplotlib parameters for consistent styling
+            size = 10  # Base font size
+            plt.rc("font", size=size)
+            plt.rc("axes", titlesize=size+3)  # Increased title size
+            plt.rc("xtick", labelsize=size)
+            plt.rc("ytick", labelsize=size)
+            plt.rc("legend", fontsize=size)
+            
+            import matplotlib as mpl
+            mpl.rcParams["figure.dpi"] = 300
+            mpl.rcParams["savefig.dpi"] = 300
+            
+            # Create a figure and plot the induction mask
+            plt.figure(figsize=(10, 8))
+            plt.imshow(induction_mask)
+            
+            # Decode tokens for axis labels
+            token_labels = [tokenizer.decode(token) for token in token_sequence]
+            
+            # Set x and y axis ticks with the decoded tokens
+            plt.xticks(range(sequence_length), token_labels, rotation=90)
+            plt.yticks(range(sequence_length), token_labels)
+            
+            # Add axis labels with larger font size
+            plt.ylabel("Source", fontsize=size+5)
+            plt.xlabel("Destination", fontsize=size+5)
+            
+            # Save the plot as PDF
+            plt.savefig("induction_mask_plot.pdf", format="pdf", bbox_inches="tight")
+            
+            # Display the plot
+            plt.show()
+            
+            num_examples -= 1
     return induction_mask
 
 
@@ -191,16 +245,16 @@ def compute_induction_head_scores(
     )  # gets the indices of elements on and below the diagonal
     induction_flat = induction_mask[tril[0], tril[1]].flatten()
 
-    induction_scores = {}
+    induction_scores_heads = {}
 
     for layer in range(num_layers):
         for head in range(num_heads):
             pattern = model_output["attentions"][layer][0][head].cpu().to(float)
             pattern_flat = pattern[tril[0], tril[1]].flatten()
             score = (induction_flat @ pattern_flat) / pattern_flat.sum()
-            induction_scores[f"L{layer}_H{head}"] = score.item()
+            induction_scores_heads[f"L{layer}_H{head}"] = score.item()
 
-    return induction_scores
+    return induction_scores_heads
 
 
 def create_heatmap(induction_scores: torch.Tensor):
@@ -345,8 +399,8 @@ def plot_attention_probabilities_tokens_heads_results(save_path: str):
     false_df = pd.DataFrame(dataset["false_probs"].to_list())
 
     # Add labels for True and False sentences
-    true_df["Type"] = "True Sentence"
-    false_df["Type"] = "False Sentence"
+    true_df["Type"] = "Correct Token"
+    false_df["Type"] = "Incorrect Token"
 
     # Concatenate both DataFrames
     long_df = pd.concat([true_df, false_df])
@@ -356,11 +410,67 @@ def plot_attention_probabilities_tokens_heads_results(save_path: str):
         id_vars=["Type"], var_name="L_H_Key", value_name="Probability"
     )
 
+    # Configure matplotlib parameters for consistent styling
+    size = 10  # Base font size
+    plt.rc("font", size=size)
+    plt.rc("axes", titlesize=size+3)  # Increased title size
+    plt.rc("xtick", labelsize=size)
+    plt.rc("ytick", labelsize=size)
+    plt.rc("legend", fontsize=size)
+    
+    import matplotlib as mpl
+    mpl.rcParams["figure.dpi"] = 300
+    mpl.rcParams["savefig.dpi"] = 300
+
     # Plot using seaborn
     plt.figure(figsize=(12, 6))
-    ax = sns.barplot(data=long_df, x="L_H_Key", y="Probability", hue="Type")
-    ax.get_figure().savefig(f"{save_path}-results-plot.png", dpi=300)
-
+    ax = sns.barplot(data=long_df, x="L_H_Key", y="Probability", hue="Type", errorbar=None)
+    
+    # Overlay individual data points with stripplot
+    sns.stripplot(
+        x="L_H_Key", 
+        y="Probability", 
+        hue="Type",
+        data=long_df,
+        dodge=True, 
+        alpha=0.5, 
+        zorder=1,
+        ax=ax,
+        palette=["k", "k"],
+        legend=False
+    )
+    
+    # Increase tick label font sizes
+    ax.tick_params(axis='both', labelsize=14)
+    
+    # Remove top and right spines
+    ax.spines[['right', 'top']].set_visible(False)
+    
+    # Set labels with larger font sizes
+    plt.ylabel('Attention Probability', fontsize=16)
+    plt.xlabel("Layer, Head", fontsize=15)
+    
+    # Set y-axis limits for probabilities
+    plt.ylim(0, 1)
+    
+    # Get the handles and labels from the plot to ensure correct color matching
+    handles, _ = ax.get_legend_handles_labels()
+    
+    # Only keep the first two handles (from barplot) to avoid duplicates from stripplot
+    handles = handles[:2]
+    
+    plt.legend(
+        handles=handles,
+        labels=["Correct Token", "Incorrect Token"],
+        loc="upper right",
+        frameon=False,
+        fontsize=14
+    )
+    
+    plt.tight_layout()
+    
+    # Save as PDF for better quality
+    ax.get_figure().savefig(f"{save_path}-results-plot.pdf", format="pdf", bbox_inches="tight", dpi=300)
 
 def get_average_across_heads(
     induction_scores, induction_scores_switched, top_k_heads: int
@@ -421,11 +531,11 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
 
     # Create attention mask
     induction_mask = create_attention_mask(
-        token_sequence=token_sequence, token_number_sentence=token_number_sentence
+        token_sequence=token_sequence, token_number_sentence=token_number_sentence, show_induction_mask=True
     )
 
     # compute the induction heads
-    induction_scores = compute_induction_head_scores(
+    induction_scores_heads = compute_induction_head_scores(
         token_sequence=token_sequence,
         induction_mask=induction_mask,
         model_output=models_output,
@@ -433,7 +543,7 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
 
     # extract the token probability for the true and false sentence
     true_token_probability, false_token_probability = token_probability_extraction(
-        heads=induction_scores,
+        heads=induction_scores_heads,
         models_output=models_output,
         token_number_sentence=token_number_sentence,
     )
@@ -447,7 +557,7 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
 
     return pd.Series(
         [
-            induction_scores,
+            induction_scores_heads,
             true_token_probability,
             false_token_probability,
             probability_logits,
@@ -539,82 +649,68 @@ def plot_logit_probs():
     # Filter out None values from false_probs for the DataFrame
     valid_false_probs = [p for p in false_probs if p is not None]
 
-    # Calculate lengths
-    n_correct = len(correct_probs)
-    n_false = len(valid_false_probs)
-    n_predicted = len(predicted_probs)
-
-    # Create arrays for the DataFrame
-    probabilities = correct_probs + valid_false_probs + predicted_probs
-    categories = (
-        ['Correct'] * n_correct +
-        ['False'] * n_false +
-        ['Predicted'] * n_predicted
-    )
-    # Sentence indices should match the number of entries per category
-    sentences = (
-        list(range(n_correct)) +  # Correct
-        [i for i, p in enumerate(false_probs) if p is not None] +  # False, only valid indices
-        [i for i, row in enumerate(dataset["result_logit_probability"])
-         for _ in json.loads(row)["Predicted"]]  # Predicted, repeat sentence index per pred token
-    )
-
-    # Verify lengths match
-    assert len(probabilities) == len(categories) == len(sentences), \
-        f"Lengths mismatch: {len(probabilities)}, {len(categories)}, {len(sentences)}"
-
-    # Create DataFrame
-    plot_data = pd.DataFrame({
-        'Probability': probabilities,
-        'Category': categories,
-        'Sentence': sentences
+    # Create DataFrames for each category
+    correct_df = pd.DataFrame({
+        'Probability': correct_probs,
+        'Category': 'Correct Token'
     })
+    
+    false_df = pd.DataFrame({
+        'Probability': valid_false_probs,
+        'Category': 'Incorrect Token'
+    })
+    
+    predicted_df = pd.DataFrame({
+        'Probability': predicted_probs,
+        'Category': 'Predicted Token'
+    })
+    
+    # Concatenate all DataFrames
+    plot_data = pd.concat([correct_df, false_df, predicted_df])
 
-    # 1. Original Box Plot
+    # Configure matplotlib parameters
+    size = 10
+    plt.rc("font", size=size)
+    plt.rc("axes", titlesize=size+3)
+    plt.rc("xtick", labelsize=size)
+    plt.rc("ytick", labelsize=size)
+    plt.rc("legend", fontsize=size)
+    
+    import matplotlib as mpl
+    mpl.rcParams["figure.dpi"] = 300
+    mpl.rcParams["savefig.dpi"] = 300
+
+    # Create the plot
     plt.figure(figsize=(12, 6))
-    sns.boxplot(x='Category', y='Probability', data=plot_data)
-    plt.title('Probability Distributions: Correct vs False vs Predicted (Box Plot)')
-    plt.ylabel('Probability')
-    plt.grid(True, alpha=0.3)
-    means = plot_data.groupby('Category')['Probability'].mean()
-    for i, mean in enumerate(means):
-        plt.axhline(y=mean, color='r', linestyle='--', alpha=0.5, xmin=i / 3, xmax=(i + 1) / 3)
+    
+    # Define custom colors for each category
+    category_colors = {
+        'Correct Token': '#2ca02c',    # Green
+        'Incorrect Token': '#d62728',      # Red
+        'Predicted Token': '#1f77b4'   # Blue
+    }
+    
+    # Create boxplot with individual points and custom colors
+    ax = sns.boxplot(data=plot_data, x="Category", y="Probability", 
+                    width=0.5, showfliers=True, 
+                    palette=category_colors)
+    
+    # Add individual points with jitter - all points are black/grey with alpha
+    sns.stripplot(data=plot_data, x="Category", y="Probability",
+                 color='black', alpha=0.3, size=4, jitter=0.2,
+                 edgecolor=None)  # Remove edge color to ensure all points are filled
+    
+    # Customize the plot
+    ax.spines[['right', 'top']].set_visible(False)
+    ax.set_ylabel('Next Token Probability', fontsize=16)
+    ax.tick_params(axis='both', labelsize=14)
+    plt.ylim(0, 1)
+    
+    plt.tight_layout()
+    plt.savefig("logit_probabilities_boxplot.pdf", format="pdf", bbox_inches="tight", dpi=300)
     plt.show()
 
-    # 2. Violin Plot
-    plt.figure(figsize=(12, 6))
-    sns.violinplot(x='Category', y='Probability', data=plot_data, inner='quartile')
-    plt.title('Probability Distributions: Correct vs False vs Predicted (Violin Plot)')
-    plt.ylabel('Probability')
-    plt.grid(True, alpha=0.3)
-    plt.show()
-
-    # 3. Histogram with Density
-    plt.figure(figsize=(12, 6))
-    for category in ['Correct', 'False', 'Predicted']:
-        subset = plot_data[plot_data['Category'] == category]['Probability']
-        plt.hist(subset, alpha=0.5, label=category, bins=20, density=True)
-    plt.title('Probability Density: Correct vs False vs Predicted')
-    plt.xlabel('Probability')
-    plt.ylabel('Density')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.show()
-
-    # 4. Scatter Plot by Sentence
-    plt.figure(figsize=(12, 6))
-    sns.scatterplot(x='Sentence', y='Probability', hue='Category', size='Probability',
-                    data=plot_data, alpha=0.6)
-    plt.title('Probabilities by Sentence: Correct vs False vs Predicted')
-    plt.xlabel('Sentence Index')
-    plt.ylabel('Probability')
-    plt.legend(title='Category')
-    plt.grid(True, alpha=0.3)
-    plt.show()
-
-    # Print statistics
-    print("\nStatistics by Category:")
-    print(plot_data.groupby('Category')['Probability'].describe())
+    
 
 
 

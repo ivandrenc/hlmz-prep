@@ -1,7 +1,5 @@
 sentence1,sentence2,last_sentence,answer_sentence1,answer_sentence2
 The capital of France is Paris.,The capital of France is Berlin.,The capital of France is, Paris, Berlin
-The chemical symbol for gold is Au.,The chemical symbol for gold is Ag.,The chemical symbol for gold is, Au, Ag
-The largest country by land area is Russia.,The largest country by land area is Canada.,The largest country by land area is, Russia, Canada
-The first person to walk on the moon was Neil Armstrong.,The first person to walk on the moon was Neil Moon.,The first person to walk on the moon was, Armstrong, Moon
-The currency of Japan is the Yen.,The currency of Japan is the Won.,The currency of Japan is the, Yen, Won
-The human body has 206 bones.,The human body has 206 eyes.,The human body has 206, bones, eyes
+The capital of France is Berlin.,The capital of France is Paris.,The capital of France is, Paris, Berlin
+The planet closest to the Sun is Mercury.,The planet closest to the Sun is Venus.,The planet closest to the Sun is, Mercury, Venus
+The planet closest to the Sun is Venus.,The planet closest to the Sun is Mercury.,The planet closest to the Sun is, Mercury, Venus
