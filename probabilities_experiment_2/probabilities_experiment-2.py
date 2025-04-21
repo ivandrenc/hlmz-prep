@@ -257,13 +257,32 @@ def compute_induction_head_scores(
     return induction_scores_heads
 
 
-def create_heatmap(induction_scores: torch.Tensor):
+def create_heatmap(induction_scores: dict):
     print_colored_separator()
-    _, ax = plt.subplots()
     print("Heatmap of induction scores across heads and layers: \n")
-    sns.heatmap(induction_scores, cbar_kws={"label": "Induction Head Score"}, ax=ax)
+    
+    # Extract layer and head information from the dictionary keys
+    layers_heads = [(int(k.split('_')[0][1:]), int(k.split('_')[1][1:])) for k in induction_scores.keys()]
+    num_layers = max([l for l, _ in layers_heads]) + 1
+    num_heads = max([h for _, h in layers_heads]) + 1
+    
+    # Create a 2D array to hold the scores
+    scores_matrix = np.zeros((num_layers, num_heads))
+    
+    # Fill the matrix with scores from the dictionary
+    for key, score in induction_scores.items():
+        layer = int(key.split('_')[0][1:])
+        head = int(key.split('_')[1][1:])
+        scores_matrix[layer, head] = score
+    
+    # Create the heatmap
+    plt.figure(figsize=(10, 8), dpi=300)
+    _, ax = plt.subplots()
+    sns.heatmap(scores_matrix, cbar_kws={"label": "Induction-Head Matching Score"}, ax=ax)
     ax.set_ylabel("Layer #")
     ax.set_xlabel("Head #")
+    plt.tight_layout()
+    plt.savefig("induction_scores_heatmap.pdf", format="pdf", bbox_inches="tight", dpi=300)
     plt.show()
 
 
@@ -540,6 +559,9 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
         induction_mask=induction_mask,
         model_output=models_output,
     )
+
+    # Create heatmap of induction scores
+    create_heatmap(induction_scores=induction_scores_heads)
 
     # extract the token probability for the true and false sentence
     true_token_probability, false_token_probability = token_probability_extraction(

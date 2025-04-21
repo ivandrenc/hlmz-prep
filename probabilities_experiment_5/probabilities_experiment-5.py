@@ -28,7 +28,7 @@ CSV_PATH_DATASET = "dataset/examples.csv"
 sns.set(style="whitegrid")
 
 
-models = [GOOGLE_GEMMA_2_2B]
+models = [META_LLAMA_3_2_3B]
 
 # Experiment description: Same as experiment 4 but now we try different types of prompt structure.
 
@@ -614,7 +614,15 @@ def plot_logit_probs_all(data_with_folders, results_path):
     for entry in data_with_folders:
         subfolder = list(entry.keys())[0]  # Get the Path object (e.g., Path("L1_H5"))
         dataset = entry[subfolder]  # Get the DataFrame
-        subfolder_name = str(subfolder)  # Convert to string for plotting
+        # Extract only the layer and head part or use "No Knockout" for main folder
+        subfolder_name = str(subfolder)
+        if "main" in subfolder_name:
+            subfolder_name = "No Knockout"
+        else:
+            # Extract just the L# part from paths like "L17/meta-llama"
+            match = re.match(r"(L\d+)", subfolder_name)
+            if match:
+                subfolder_name = match.group(1)
 
         # Process data
         for row in dataset["result_logit_probability"]:
@@ -623,62 +631,108 @@ def plot_logit_probs_all(data_with_folders, results_path):
             keys = [k for k in parsed.keys() if k != "Predicted"]
 
             # Correct token (first key)
-            plot_data.append(
-                {
-                    "Subfolder": subfolder_name,
-                    "Category": "Correct",
-                    "Probability": parsed[keys[0]],
-                }
-            )
+            plot_data.append({
+                "Subfolder": subfolder_name,
+                "Category": "Correct Token",
+                "Probability": parsed[keys[0]]
+            })
 
             # False token (second key, if it exists)
             if len(keys) > 1:
-                plot_data.append(
-                    {
-                        "Subfolder": subfolder_name,
-                        "Category": "False",
-                        "Probability": parsed[keys[1]],
-                    }
-                )
+                plot_data.append({
+                    "Subfolder": subfolder_name,
+                    "Category": "Incorrect Token",
+                    "Probability": parsed[keys[1]]
+                })
             else:
-                plot_data.append(
-                    {
-                        "Subfolder": subfolder_name,
-                        "Category": "False",
-                        "Probability": 0,  # Default to 0 if no false token
-                    }
-                )
+                plot_data.append({
+                    "Subfolder": subfolder_name,
+                    "Category": "Incorrect Token",
+                    "Probability": 0  # Default to 0 if no false token
+                })
 
     # Convert to DataFrame
     plot_df = pd.DataFrame(plot_data)
 
+    # Configure matplotlib parameters
+    size = 10
+    plt.rc("font", size=size)
+    plt.rc("axes", titlesize=size+3)
+    plt.rc("xtick", labelsize=size)
+    plt.rc("ytick", labelsize=size)
+    plt.rc("legend", fontsize=size)
+    
+    import matplotlib as mpl
+    mpl.rcParams["figure.dpi"] = 300
+    mpl.rcParams["savefig.dpi"] = 300
+
     # Create the plot
-    plt.figure(figsize=(12, 6))  # Adjust size based on number of subfolders
-    sns.barplot(
-        x="Knocked out layers",
+    plt.figure(figsize=(12, 6))
+    
+    # Define custom colors for each category
+    category_colors = {
+        'Correct Token': '#1f77b4',    # Blue
+        'Incorrect Token': '#ff7f0e'   # Orange
+    }
+    
+    # Create barplot with custom colors
+    ax = sns.barplot(
+        x="Subfolder",
         y="Probability",
         hue="Category",
         data=plot_df,
-        palette={"Correct": "skyblue", "False": "salmon"},
+        palette=category_colors,
+        errorbar=None
     )
 
-    # Customize plot
-    plt.xlabel("Knocked out layers")
-    plt.ylabel("Mean Probability")
-    plt.title("Mean Probabilities of Correct vs False Tokens Across Subfolders")
+    # Overlay individual data points with stripplot
+    sns.stripplot(
+        x="Subfolder", 
+        y="Probability", 
+        hue="Category",
+        data=plot_df,
+        dodge=True, 
+        alpha=0.5, 
+        zorder=1,
+        ax=ax,
+        palette=["k", "k"],
+        legend=False
+    )
+
+    # Customize the plot
+    ax.spines[['right', 'top']].set_visible(False)
+    ax.set_ylabel('Next Token Probability', fontsize=16)
+    ax.tick_params(axis='both', labelsize=14)
     plt.xticks(rotation=45, ha="right")  # Rotate labels for readability
     plt.ylim(0, 1)  # Set y-axis limit to 0-1 for consistency
-    plt.legend(title="Category")
+    
+    # Get the handles and labels from the plot to ensure correct color matching
+    handles, _ = ax.get_legend_handles_labels()
+    
+    # Only keep the first two handles (from barplot) to avoid duplicates from stripplot
+    handles = handles[:2]
+    
+    plt.legend(
+        handles=handles,
+        labels=["Correct Token", "Incorrect Token"],
+        title="Category",
+        loc="upper right",
+        frameon=False,
+        fontsize=12
+    )
+    
+    # Remove the x-axis label by setting it to an empty string
+    ax.set_xlabel('')
+    
     plt.tight_layout()
 
-    # Save the plot in the parent directory (optional)
-    output_file = Path(results_path) / "exp_5_results.png"
-    plt.savefig(output_file, dpi=300, bbox_inches="tight")
+    # Save the plot in the parent directory
+    output_file = Path(results_path) / "ablation_layers_experiment_5.pdf"
+    plt.savefig(output_file, format="pdf", bbox_inches="tight", dpi=300)
     print(f"Saved plot: {output_file}")
 
-    # Show the plot (optional, remove if only saving is needed)
+    # Show the plot
     plt.show()
-    plt.close()
 
 
 def knock_out_attention_layer(layer_idx, model):
@@ -852,7 +906,7 @@ def main():
     try:
         # ### Experiment Start
         print("Your current working directory:", os.getcwd())
-        results_path = "results_google_new_prompt"
+        results_path = f"results-{models[0]}-new-prompt"
 
         # Calculate running the experiment without knocking out any attention heads -> return top found heads
         # Results are in columns "attention_probability_first_sentence_token_top_induction_heads,
@@ -876,7 +930,7 @@ def main():
         knockout = True 
         if knockout:
             for layer in layers:
-                # Run the experiment, knocking out head by head and save results.
+                # Run the experiment, knocking out layer by layer and save results.
                 run_experiment(
                     dataset_csv_file_path=CSV_PATH_DATASET,
                     model_name=models[0],
@@ -887,7 +941,7 @@ def main():
                     layer=layer,
                 )
 
-                # print(f"The top heads for the experiment after knocking out head {head} at layer {layer} are {knockout_top_heads}.")
+                # print(f"The top heads for the experiment after knocking out layer {layer} are {knockout_top_heads}.")
                 delete_model(model=model, tokenizer=tokenizer)
                 initialize_model(model_name=models[0])  # reinit the model
 
