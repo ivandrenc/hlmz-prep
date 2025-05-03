@@ -31,7 +31,7 @@ CSV_PATH_DATASET = "dataset/examples.csv"
 num_examples = 1
 
 
-models = [META_LLAMA_3_2_3B]
+models = [GOOGLE_GEMMA_2_2B]
 
 # Experiment description: We run the model with the examples in no order and with the order switched, find the top 5
 # induction heads by looking into the induction scores of both ran examples, average the scores across examples and
@@ -550,7 +550,7 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
 
     # Create attention mask
     induction_mask = create_attention_mask(
-        token_sequence=token_sequence, token_number_sentence=token_number_sentence, show_induction_mask=True
+        token_sequence=token_sequence, token_number_sentence=token_number_sentence 
     )
 
     # compute the induction heads
@@ -561,7 +561,6 @@ def calculate_induction_scores(first_sentence: str, second_sentence: str):
     )
 
     # Create heatmap of induction scores
-    create_heatmap(induction_scores=induction_scores_heads)
 
     # extract the token probability for the true and false sentence
     true_token_probability, false_token_probability = token_probability_extraction(
@@ -684,7 +683,7 @@ def plot_logit_probs():
     
     predicted_df = pd.DataFrame({
         'Probability': predicted_probs,
-        'Category': 'Predicted Token'
+        'Category': 'Token with heighest probability'
     })
     
     # Concatenate all DataFrames
@@ -705,11 +704,11 @@ def plot_logit_probs():
     # Create the plot
     plt.figure(figsize=(12, 6))
     
-    # Define custom colors for each category
+    # Define custom colors for each category using typical blue and orange
     category_colors = {
-        'Correct Token': '#2ca02c',    # Green
-        'Incorrect Token': '#d62728',      # Red
-        'Predicted Token': '#1f77b4'   # Blue
+        'Correct Token': '#1f77b4',    # Blue
+        'Incorrect Token': '#ff7f0e',  # Orange
+        'Token with heighest probability': '#2ca02c'   # Green (keeping this one)
     }
     
     # Create boxplot with individual points and custom colors
