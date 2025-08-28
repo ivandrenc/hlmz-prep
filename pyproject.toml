@@ -1,0 +1,19 @@
+[project]
+name = "hlmz-prep"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.10.0",
+    "circuitsvis>=1.43.3",
+    "ipykernel>=6.30.1",
+    "matplotlib>=3.10.5",
+    "nnsight>=0.5.1",
+    "numpy>=2.3.2",
+    "pandas>=2.3.2",
+    "plotly>=6.3.0",
+    "seaborn>=0.13.2",
+    "torch>=2.8.0",
+    "transformers>=4.55.4",
+]
